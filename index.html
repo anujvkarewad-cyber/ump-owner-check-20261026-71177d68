@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src https://own-tgt-20261026-b6b50c---ujjwal-pathak-app-zffwxlrufa-el.a.run.app; base-uri 'none'; form-action 'none'">
+<title>Owner-only Targets check v2</title>
+<style>
+:root{color-scheme:light}body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;margin:0;background:#f5f7fb;color:#172033}main{max-width:760px;margin:auto;padding:18px}.card{background:#fff;border:1px solid #dce3ee;border-radius:14px;padding:16px;margin-bottom:14px;box-shadow:0 2px 10px #1018280a}h1{font-size:21px;margin:0 0 6px}.muted{color:#667085;font-size:13px;line-height:1.45}label{display:block;font-weight:650;font-size:13px;margin:10px 0 5px}input{width:100%;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:10px;padding:12px;font-size:16px;background:#fff;color:#172033}button{margin-top:12px;width:100%;border:0;border-radius:10px;padding:13px;font-size:16px;font-weight:700;background:#1859d1;color:#fff}button:disabled{opacity:.55}.pill{display:inline-block;border-radius:999px;padding:4px 10px;font-size:12px;font-weight:700;background:#eef4ff;color:#1849a9}#result{font-size:22px;font-weight:800;margin:4px 0 8px}#result.pass{color:#087443}#result.partial{color:#9a6700}#result.fail{color:#b42318}pre{white-space:pre-wrap;word-break:break-word;background:#0f172a;color:#dbeafe;border-radius:10px;padding:12px;font-size:12px;line-height:1.5;max-height:50vh;overflow:auto}code{word-break:break-all}.small{font-size:12px}
+</style></head><body><main>
+<section class="card"><h1>Owner-only Targets check v2</h1><p class="muted">This private page talks only to the zero-traffic test backend URL. The installed app and other students remain on the old live backend. It first tries plan save/readback; if no active plan exists, it tries a due revision assessment save/readback. UMP0000 data only. Password is not saved.</p><p class="muted small">Test endpoint: <code>https://own-tgt-20261026-b6b50c---ujjwal-pathak-app-zffwxlrufa-el.a.run.app</code></p></section>
+<section class="card"><label for="sid">Student ID</label><input id="sid" value="UMP0000" autocomplete="username" spellcheck="false"><label for="pw">Password</label><input id="pw" type="password" autocomplete="current-password" placeholder="Enter your app password"><button id="run" type="button">Run isolated Targets check</button></section>
+<section class="card"><span class="pill" id="state">Not started</span><div id="result">—</div><pre id="log">Ready.</pre></section>
+</main><script>
+const API='https://own-tgt-20261026-b6b50c---ujjwal-pathak-app-zffwxlrufa-el.a.run.app';const $=id=>document.getElementById(id);const lines=[];
+function say(x){lines.push(x);$('log').textContent=lines.join('\n')}
+function finish(kind,title){$('result').className=kind;$('result').textContent=title;$('state').textContent='Finished';$('run').disabled=false}
+async function post(action,body){const r=await fetch(API+'/api/smart-targets/student/'+action,{method:'POST',mode:'cors',credentials:'omit',cache:'no-store',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify(body)});let data=null;try{data=await r.json()}catch(e){}return {status:r.status,data:data||{}}}
+function err(x){return String((x.data&&(x.data.detail||x.data.message))||'').slice(0,180)}
+function num(x){return Number(x||0)}
+$('run').addEventListener('click',async()=>{
+ const sid=$('sid').value.trim(),pw=$('pw').value;if(!sid||!pw){finish('fail','Enter ID and password');say('Missing credentials.');return}
+ $('run').disabled=true;$('state').textContent='Running';lines.length=0;say('Starting isolated test v2…');
+ try{
+  const wrong=await post('dashboard',{studentId:sid,password:pw+'__wrong__'});say('Wrong-password check: HTTP '+wrong.status+(wrong.status===401?' (expected)':' (unexpected)'));
+  const d1=await post('dashboard',{studentId:sid,password:pw});say('Dashboard load: HTTP '+d1.status+(d1.status!==200?' '+err(d1):''));
+  if(d1.status!==200){finish('fail','Dashboard failed');return}
+  const plans=Array.isArray(d1.data.plans)?d1.data.plans:[];
+  const revisions=(d1.data.revisions&&Array.isArray(d1.data.revisions.chapters))?d1.data.revisions.chapters:[];
+  const today=String(d1.data.today||new Date().toISOString().slice(0,10));
+  const due=revisions.filter(r=>r&&r.revisionKey&&r.dueOn&&r.dueOn<=today);
+  say('Response shape: plans='+plans.length+', history='+((d1.data.history||[]).length)+', revisions='+revisions.length+', dueRevisions='+due.length+', studentId='+String(d1.data.studentId||''));
+  let save='SKIPPED',mode='none';
+  // 1) Preferred: active plan task save + fresh readback.
+  if(plans.length){
+   mode='plan';const plan=plans.find(p=>p&&p.planId&&(!p.progress||p.progress.complete===false))||plans[0];
+   const started=await post('start',{studentId:sid,password:pw,planId:plan.planId});say('Plan start: HTTP '+started.status+(started.status!==200?' '+err(started):''));
+   if(started.status===200){
+    const prog=started.data.progress||{};const before=num(prog.completedTasks);
+    const day=(prog.days||[]).find(d=>!d.done&&(d.tasks||[]).length)||(prog.days||[])[0];
+    const task=day&&(day.tasks||[]).find(t=>!t.done);
+    if(task&&task.id){
+     const saved=await post('complete',{studentId:sid,password:pw,planId:plan.planId,taskId:task.id});say('Plan save one task: HTTP '+saved.status+(saved.status!==200?' '+err(saved):''));
+     if(saved.status===200){
+      const d2=await post('dashboard',{studentId:sid,password:pw});const p2=(d2.data.plans||[]).find(p=>p.planId===plan.planId);const after=p2&&p2.progress?num(p2.progress.completedTasks):null;
+      const retry=await post('complete',{studentId:sid,password:pw,planId:plan.planId,taskId:task.id});const d3=await post('dashboard',{studentId:sid,password:pw});const p3=(d3.data.plans||[]).find(p=>p.planId===plan.planId);const afterRetry=p3&&p3.progress?num(p3.progress.completedTasks):null;
+      say('Fresh readback: completedTasks '+before+' -> '+after+'; duplicate retry HTTP '+retry.status+', then '+afterRetry);
+      save=(d2.status===200&&after!==null&&after>before&&retry.status===200&&afterRetry===after)?'PASS':'FAIL';
+     }else save='FAIL';
+    }else{say('No open task in selected plan; trying revision assessment fallback.');mode='revision'}
+   }else{say('Plan start failed; trying revision assessment fallback.');mode='revision'}
+  }else{say('No active Smart Targets plan; trying revision assessment fallback.');mode='revision'}
+  // 2) Fallback: one due revision assessment + fresh readback.
+  if(mode==='revision'&&save!=='PASS'){
+   if(!due.length){say('No due revision is available for assessment; save/readback remains skipped.')}
+   else{
+    const chapter=due[0];const suffix=Date.now().toString(36)+Math.random().toString(36).slice(2,8);const sessionId='owner-test-'+suffix;const eventId='event-'+sessionId;
+    const payload={studentId:sid,password:pw,eventId,sessionId,revisionKey:chapter.revisionKey,revisionVersion:num(chapter.revisionVersion),attempted:2,correct:1,durationSeconds:60,confidence:'Medium',shareSummary:true};
+    const saved=await post('assessment',payload);say('Revision assessment save: HTTP '+saved.status+(saved.status!==200?' '+err(saved):''));
+    if(saved.status===200){
+     const d2=await post('dashboard',{studentId:sid,password:pw});const after=((d2.data.revisions||{}).chapters||[]).find(r=>r.revisionKey===chapter.revisionKey);
+     const beforeA=num(chapter.questionAttemptedTotal),afterA=after?num(after.questionAttemptedTotal):null;
+     const beforeC=num(chapter.questionCorrectTotal),afterC=after?num(after.questionCorrectTotal):null;
+     const sourceOK=after&&after.lastAssessmentSource==='student-reported-question-score';
+     say('Revision readback: attempted '+beforeA+' -> '+afterA+', correct '+beforeC+' -> '+afterC+', source='+String(after&&after.lastAssessmentSource));
+     save=(d2.status===200&&afterA!==null&&afterA>=beforeA+2&&afterC!==null&&afterC>=beforeC+1&&sourceOK)?'PASS':'FAIL';
+    }else save='FAIL';
+   }
+  }
+  const dashboardOK=d1.status===200,authOK=wrong.status===401;
+  if(dashboardOK&&authOK&&save==='PASS')finish('pass','PASS — route, auth, save and readback');
+  else if(dashboardOK&&authOK&&save==='SKIPPED')finish('partial','PARTIAL — route/auth passed; no plan or due revision to test save');
+  else finish('fail','FAIL — check the log');
+ }catch(e){say('Network/JS error: '+String(e&&e.message||e));finish('fail','FAIL — network error')}
+});
+</script></body></html>
